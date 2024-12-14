@@ -10,6 +10,15 @@ db.serialize(() => {
     originalName TEXT NOT NULL,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS scenes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    videoId INTEGER NOT NULL,
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    metadata TEXT,
+    FOREIGN KEY (videoId) REFERENCES videos (id) ON DELETE CASCADE
+  )`);
 });
 
 module.exports = db;

@@ -26,7 +26,10 @@ function Preview({
   const canvasContainerRef = useRef(null);
   const scenesRef = useRef(scenes);
 
-  const [videoDimensions, setVideoDimensions] = useState({ width: 0, height: 0 });
+  const [videoDimensions, setVideoDimensions] = useState({
+    width: 0,
+    height: 0,
+  });
 
   useEffect(() => {
     scenesRef.current = scenes;
@@ -43,7 +46,7 @@ function Preview({
     }
   }, [scenes]);
 
-  const drawCanvas = (activeScene) => {
+  const drawCanvas = activeScene => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
@@ -58,7 +61,10 @@ function Preview({
     const videoAspectRatio = video.videoWidth / video.videoHeight;
     const targetAspectRatio = targetWidth / targetHeight;
 
-    let drawWidth, drawHeight, offsetX = 0, offsetY = 0;
+    let drawWidth,
+      drawHeight,
+      offsetX = 0,
+      offsetY = 0;
     if (Math.abs(videoAspectRatio - targetAspectRatio) < 0.0001) {
       // Aspect ratios effectively equal
       drawWidth = targetWidth;
@@ -79,15 +85,23 @@ function Preview({
       // No scene: just draw fitted video
       ctx.drawImage(
         video,
-        0, 0, video.videoWidth, video.videoHeight,
-        offsetX, offsetY, drawWidth, drawHeight
+        0,
+        0,
+        video.videoWidth,
+        video.videoHeight,
+        offsetX,
+        offsetY,
+        drawWidth,
+        drawHeight,
       );
       return;
     }
 
     // With an active scene, apply cropping, scaling, and position
     const { crop, scale, position } = activeScene;
-    const [virtualWidth, virtualHeight] = virtualResolution.split('x').map(Number);
+    const [virtualWidth, virtualHeight] = virtualResolution
+      .split('x')
+      .map(Number);
 
     const adjustedX = (position.x / virtualWidth) * targetWidth;
     const adjustedY = (position.y / virtualHeight) * targetHeight;
@@ -99,14 +113,20 @@ function Preview({
     // Draw the cropped portion of the video
     ctx.drawImage(
       video,
-      crop.x, crop.y, crop.width, crop.height,
-      0, 0, crop.width, crop.height
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height,
     );
 
     ctx.restore();
   };
 
-  const drawCropPreview = (activeScene) => {
+  const drawCropPreview = activeScene => {
     const video = videoRef.current;
     const canvas = cropPreviewRef.current;
     if (!video || !canvas) return;
@@ -118,14 +138,22 @@ function Preview({
 
     const { crop, scale, position } = activeScene;
     const [targetWidth, targetHeight] = resolution.split('x').map(Number);
-    const [virtualWidth, virtualHeight] = virtualResolution.split('x').map(Number);
+    const [virtualWidth, virtualHeight] = virtualResolution
+      .split('x')
+      .map(Number);
 
     // Draw only the cropped portion at (0,0) in the crop preview
     // The rest of the canvas remains blank, showing only what is cropped out from the original.
     ctx.drawImage(
       video,
-      crop.x, crop.y, crop.width, crop.height,
-      0, 0, crop.width, crop.height
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height,
     );
 
     // Now calculate the final output frame coordinates back into original space
@@ -144,7 +172,7 @@ function Preview({
     // targetWidth = adjustedX + scale*(X_orig2 - crop.x)
     // X_orig2 = crop.x + (targetWidth - adjustedX)/scale
     const X_orig2 = crop.x + (targetWidth - adjustedX) / scale;
-    
+
     // For finalY=targetHeight:
     // targetHeight = adjustedY + scale*(Y_orig2 - crop.y)
     // Y_orig2 = crop.y + (targetHeight - adjustedY)/scale
@@ -155,8 +183,8 @@ function Preview({
     // So we subtract crop.x and crop.y:
     const rectX = X_orig1 - crop.x;
     const rectY = Y_orig1 - crop.y;
-    const rectW = (X_orig2 - X_orig1);
-    const rectH = (Y_orig2 - Y_orig1);
+    const rectW = X_orig2 - X_orig1;
+    const rectH = Y_orig2 - Y_orig1;
 
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 2;
@@ -168,42 +196,36 @@ function Preview({
     if (!video || !scenesRef.current) return;
 
     const activeScene = scenesRef.current.find(
-      scene => video.currentTime >= scene.start && video.currentTime <= scene.end,
+      scene =>
+        video.currentTime >= scene.start && video.currentTime <= scene.end,
     );
 
     const currentVideoTime = video.currentTime;
     if (currentVideoTime !== lastDrawnTimeRef.current) {
       lastDrawnTimeRef.current = currentVideoTime;
+
       drawCanvas(activeScene);
       drawCropPreview(activeScene);
+
+      let time = currentVideoTime;
+      let updateVideo = false;
+
+      if (isFinalResultMode) {
+        if (!activeScene) {
+          const nextScene = scenesRef.current.find(scene => scene.start > time);
+          if (nextScene) {
+            time = nextScene.start;
+          } else {
+            time = 0;
+          }
+          updateVideo = true;
+        }
+      }
+
+      setCurrentTime(time, updateVideo);
     }
 
     animationFrameRef.current = requestAnimationFrame(animationLoop);
-  };
-
-  const onVideoTimeUpdate = () => {
-    const video = videoRef.current;
-    if (!video || !scenesRef.current) return;
-
-    let time = video.currentTime;
-    let updateVideo = false;
-
-    if (isFinalResultMode) {
-      const activeScene = scenesRef.current.find(
-        scene => time >= scene.start && time <= scene.end,
-      );
-      if (!activeScene) {
-        const nextScene = scenesRef.current.find(scene => scene.start > time);
-        if (nextScene) {
-          time = nextScene.start;
-        } else {
-          time = 0;
-        }
-        updateVideo = true;
-      }
-    }
-
-    setCurrentTime(time, updateVideo);
   };
 
   useEffect(() => {
@@ -214,7 +236,7 @@ function Preview({
 
     const container = canvasContainerRef.current;
     if (!container || container.clientHeight <= 0) return;
-    
+
     const containerHeight = container.clientHeight;
 
     const videoHeight = containerHeight;
@@ -238,7 +260,14 @@ function Preview({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [videoUrl, aspectRatio, resolution, virtualResolution, videoRef, duration]);
+  }, [
+    videoUrl,
+    aspectRatio,
+    resolution,
+    virtualResolution,
+    videoRef,
+    duration,
+  ]);
 
   return (
     <PreviewContainer>
@@ -246,7 +275,7 @@ function Preview({
         <CropCanvas ref={cropPreviewRef} videoWidth={videoDimensions.width} />
         <VideoCanvas ref={canvasRef} videoWidth={videoDimensions.width} />
       </CanvasContainer>
-      <VideoElement ref={videoRef} onTimeUpdate={onVideoTimeUpdate} />
+      <VideoElement ref={videoRef} />
     </PreviewContainer>
   );
 }

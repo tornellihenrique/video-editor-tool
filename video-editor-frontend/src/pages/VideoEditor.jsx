@@ -52,7 +52,7 @@ function VideoEditor() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
-  const [isFinalResultMode, setIsFinalResultMode] = useState(true);
+  const [isFinalResultMode, setIsFinalResultMode] = useState(false);
 
   const [aspectRatio, setAspectRatio] = useState('9:16');
   const [resolutionNick, setResolutionNick] = useState('Full HD');
@@ -65,18 +65,18 @@ function VideoEditor() {
 
   const [videos, setVideos] = useState([]);
 
-  const aspectRatioMapping = {
-    '9:16': {
-      'Full HD': '1080x1920',
-      HD: '720x1280',
-    },
-    '16:9': {
-      'Full HD': '1920x1080',
-      HD: '1280x720',
-    },
-  };
-
   useEffect(() => {
+    const aspectRatioMapping = {
+      '9:16': {
+        'Full HD': '1080x1920',
+        HD: '720x1280',
+      },
+      '16:9': {
+        'Full HD': '1920x1080',
+        HD: '1280x720',
+      },
+    };
+
     if (aspectRatioMapping[aspectRatio]?.[resolutionNick]) {
       setResolution(aspectRatioMapping[aspectRatio][resolutionNick]);
       setVirtualResolution(aspectRatioMapping[aspectRatio][resolutionNick]);
@@ -92,6 +92,7 @@ function VideoEditor() {
     try {
       const res = await fetch(`${API_BASE_URL}/videos`);
       if (!res.ok) throw new Error('Failed to fetch videos');
+
       const data = await res.json();
       setVideos(data);
     } catch (err) {
@@ -103,24 +104,11 @@ function VideoEditor() {
     fetchVideos();
   }, []);
 
-  const processVideo = async filePath => {
+  const processVideo = video => {
     setLoading(true);
     setError(null);
     try {
-      // Detect scenes from the selected video
-      const detectRes = await fetch(`${API_BASE_URL}/detect-scenes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoPath: filePath }),
-      });
-
-      if (!detectRes.ok) {
-        const errData = await detectRes.json();
-        throw new Error(errData.error || 'Scene detection failed');
-      }
-
-      const scenesData = await detectRes.json();
-      const parsedScenes = scenesData.scenes.map(scene => ({
+      const parsedScenes = video.scenes.map(scene => ({
         start: scene.start,
         end: scene.end,
         crop: { x: 0, y: 0, width: 1280, height: 720 },
@@ -131,10 +119,10 @@ function VideoEditor() {
       setScenes(parsedScenes);
 
       // Load the video
-      setVideoUrl(filePath);
+      setVideoUrl(video.fileUrl);
 
       if (videoRef.current) {
-        videoRef.current.src = filePath;
+        videoRef.current.src = video.fileUrl;
         videoRef.current.load();
         videoRef.current.onloadedmetadata = () => {
           setDuration(videoRef.current.duration);
@@ -169,11 +157,10 @@ function VideoEditor() {
         throw new Error(errData.error || 'Upload failed');
       }
 
-      const uploadData = await uploadRes.json();
-      const { filePath } = uploadData;
+      const video = await uploadRes.json();
 
       await fetchVideos(); // refresh the list of videos
-      await processVideo(filePath); // run detect scenes and load it
+      await processVideo(video); // run detect scenes and load it
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -184,7 +171,7 @@ function VideoEditor() {
 
   const handleSelectVideo = async video => {
     // When selecting a video from the list, process it as well
-    await processVideo(video.fileUrl);
+    await processVideo(video);
   };
 
   const handlePlayPause = () => {

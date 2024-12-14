@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+/* eslint-disable react/prop-types */
+import { useState } from 'react';
 
 import {
   SidebarContainer,

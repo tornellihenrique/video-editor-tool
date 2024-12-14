@@ -11,6 +11,13 @@ const { v4: uuidv4 } = require('uuid');
 const { exec, execFile } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 
+const os = require('os');
+
+// Detect the operating system
+const isWindows = os.platform() === 'win32';
+const isLinux = os.platform() === 'linux';
+const isMac = os.platform() === 'darwin';
+
 const { mergeScenes, getFilters, getComplexFilter } = require('./utils.js');
 
 const app = express();
@@ -28,6 +35,15 @@ app.use(
 );
 
 const uploadsPath = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsPath)) {
+  fs.mkdirSync(uploadsPath, { recursive: true });
+}
+
+const processedPath = path.join(__dirname, 'processed');
+if (!fs.existsSync(processedPath)) {
+  fs.mkdirSync(processedPath, { recursive: true });
+}
+
 app.use('/uploads', express.static(uploadsPath));
 
 const storage = multer.diskStorage({
@@ -47,7 +63,7 @@ const upload = multer({
   limits: { fileSize: 3000 * 1024 * 1024 }, // 3 GB max file size
 });
 
-app.post('/upload', upload.single('video'), (req, res) => {
+app.post('/upload-old', upload.single('video'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file uploaded' });
   }
@@ -80,12 +96,46 @@ app.get('/videos', (req, res) => {
   db.all(
     'SELECT id, fileUrl, originalName, createdAt FROM videos ORDER BY createdAt DESC',
     [],
-    (err, rows) => {
+    (err, videos) => {
       if (err) {
         console.error('DB select error:', err);
         return res.status(500).json({ error: 'Failed to fetch videos' });
       }
-      res.json(rows);
+
+      // Fetch scenes for each video
+      const videoPromises = videos.map(video => {
+        return new Promise((resolve, reject) => {
+          db.all(
+            'SELECT id, videoId, start, end, metadata FROM scenes WHERE videoId = ? ORDER BY start ASC',
+            [video.id],
+            (err, scenes) => {
+              if (err) {
+                console.error('DB select error (scenes):', err);
+                return reject(err);
+              }
+
+              // Attach scenes to the video object
+              resolve({
+                ...video,
+                scenes: scenes.map(({ start, end }) => ({ start, end })),
+              });
+            },
+          );
+        });
+      });
+
+      // Wait for all video-scene mappings to complete
+      Promise.all(videoPromises)
+        .then(results => {
+          res.json(results);
+        })
+        .catch(fetchError => {
+          console.error('Error fetching scenes:', fetchError);
+          res.status(500).json({
+            error: 'Failed to fetch scenes for videos',
+            details: fetchError.message,
+          });
+        });
     },
   );
 });
@@ -101,10 +151,84 @@ app.post('/detect-scenes', (req, res) => {
     const fileName = path.basename(new URL(videoPath).pathname);
     const localFilePath = path.join(uploadsPath, fileName);
 
+    // Dynamically set the Python executable path based on the OS
+    const pythonExecutable = isWindows
+      ? path.join(__dirname, 'venv', 'Scripts', 'python.exe') // Windows
+      : path.join(__dirname, 'venv', 'bin', 'python'); // Linux/macOS
+
+    console.log(`Detected OS: ${os.platform()}`);
+    console.log(`Using Python executable: ${pythonExecutable}`);
+
     const scriptPath = path.join(__dirname, 'detect_scenes.py');
     console.log(`Running scene detection for video: ${localFilePath}`);
 
-    execFile('python', [scriptPath, localFilePath], (error, stdout, stderr) => {
+    execFile(
+      pythonExecutable,
+      [scriptPath, localFilePath],
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error('Error running Python script:', error.message);
+          console.error('stderr:', stderr);
+          return res
+            .status(500)
+            .json({ error: 'Failed to detect scenes', details: error.message });
+        }
+
+        try {
+          const result = JSON.parse(stdout);
+          if (result.error) {
+            return res.status(400).json(result);
+          }
+
+          res.status(200).json(result);
+        } catch (parseError) {
+          console.error('Error parsing script output:', parseError.message);
+          res.status(500).json({
+            error: 'Failed to process scene data',
+            details: parseError.message,
+          });
+        }
+      },
+    );
+  } catch (urlError) {
+    console.error('Invalid videoPath:', urlError.message);
+    return res.status(400).json({ error: 'Invalid videoPath URL' });
+  }
+});
+
+app.post('/upload', upload.single('video'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No video file uploaded' });
+  }
+
+  // req.protocol gives 'http' or 'https'
+  // req.get('host') gives the host (e.g. 'localhost:5000' or 'mydomain.com')
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const fileName = req.file.filename;
+  const fileUrl = `${baseUrl}/uploads/${fileName}`;
+
+  const videoDetails = {
+    fileUrl,
+    originalName: req.file.originalname,
+  };
+
+  // Detect OS and set Python executable
+  const pythonExecutable = isWindows
+    ? path.join(__dirname, 'venv', 'Scripts', 'python.exe') // Windows
+    : path.join(__dirname, 'venv', 'bin', 'python'); // Linux/macOS
+
+  const scriptPath = path.join(__dirname, 'detect_scenes.py');
+  const localFilePath = path.join(uploadsPath, fileName);
+
+  console.log(`Detected OS: ${os.platform()}`);
+  console.log(`Using Python executable: ${pythonExecutable}`);
+  console.log(`Running scene detection for video: ${localFilePath}`);
+
+  // Execute Python script for scene detection
+  execFile(
+    pythonExecutable,
+    [scriptPath, localFilePath],
+    (error, stdout, stderr) => {
       if (error) {
         console.error('Error running Python script:', error.message);
         console.error('stderr:', stderr);
@@ -114,12 +238,65 @@ app.post('/detect-scenes', (req, res) => {
       }
 
       try {
-        const result = JSON.parse(stdout);
-        if (result.error) {
-          return res.status(400).json(result);
-        }
+        // Parse the result from the Python script
+        const detectedScenes = JSON.parse(stdout);
 
-        res.status(200).json(result);
+        // Save video and detected scenes into the database
+        db.run(
+          `INSERT INTO videos (fileUrl, originalName) VALUES (?, ?)`,
+          [videoDetails.fileUrl, videoDetails.originalName],
+          function (err) {
+            if (err) {
+              console.error('DB insert error (video):', err);
+              return res
+                .status(500)
+                .json({ error: 'Failed to store video in database' });
+            }
+
+            const videoId = this.lastID; // Get the inserted video ID
+
+            // Save detected scenes in the database
+            const sceneInsertPromises = detectedScenes.scenes.map(scene => {
+              return new Promise((resolve, reject) => {
+                db.run(
+                  `INSERT INTO scenes (videoId, start, end, metadata) VALUES (?, ?, ?, ?)`,
+                  [
+                    videoId,
+                    scene.start,
+                    scene.end,
+                    JSON.stringify(scene.metadata),
+                  ],
+                  err => {
+                    if (err) {
+                      console.error('DB insert error (scene):', err);
+                      reject(err);
+                    } else {
+                      resolve();
+                    }
+                  },
+                );
+              });
+            });
+
+            // Wait for all scenes to be saved
+            Promise.all(sceneInsertPromises)
+              .then(() => {
+                res.status(200).json({
+                  id: videoId,
+                  fileUrl: videoDetails.fileUrl,
+                  originalName: videoDetails.originalName,
+                  scenes: detectedScenes.scenes,
+                });
+              })
+              .catch(sceneError => {
+                console.error('Error saving scenes:', sceneError);
+                res.status(500).json({
+                  error: 'Failed to store scenes in database',
+                  details: sceneError.message,
+                });
+              });
+          },
+        );
       } catch (parseError) {
         console.error('Error parsing script output:', parseError.message);
         res.status(500).json({
@@ -127,11 +304,8 @@ app.post('/detect-scenes', (req, res) => {
           details: parseError.message,
         });
       }
-    });
-  } catch (urlError) {
-    console.error('Invalid videoPath:', urlError.message);
-    return res.status(400).json({ error: 'Invalid videoPath URL' });
-  }
+    },
+  );
 });
 
 app.post('/export', async (req, res) => {
@@ -166,10 +340,7 @@ app.post('/export', async (req, res) => {
       .split('x')
       .map(Number);
 
-    const outputDir = path.join(__dirname, 'processed');
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir);
-    }
+    const outputDir = processedPath;
 
     const processScene = (scene, index) => {
       return new Promise((resolve, reject) => {
@@ -189,7 +360,7 @@ app.post('/export', async (req, res) => {
           .complexFilter(complexFilter)
           // Map the final output stream to the output file
           .map('[out]')
-          .setStartTime(start)
+          .setstart(start)
           .setDuration(end - start)
           .output(outputPath)
           .on('start', commandLine => {
@@ -248,7 +419,7 @@ app.post('/export', async (req, res) => {
 
 app.get('/processed/:filename', (req, res) => {
   const { filename } = req.params;
-  const filePath = path.join(__dirname, 'processed', filename);
+  const filePath = path.join(processedPath, filename);
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'File not found' });
