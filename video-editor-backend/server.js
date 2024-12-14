@@ -1,9 +1,11 @@
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
 const bodyParser = require('body-parser');
+const cors = require('cors');
+
 const { exec, execFile } = require('child_process');
-const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
 
 const { mergeScenes, getFilters, getComplexFilter } = require('./utils.js');
@@ -14,6 +16,15 @@ const PORT = 3000;
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// CORS
+app.use(
+  cors({
+    origin: '*',
+    credentials: true, //access-control-allow-credentials:true
+    optionSuccessStatus: 200,
+  }),
+);
 
 // File upload configuration
 const storage = multer.diskStorage({
@@ -28,7 +39,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB max file size
+  limits: { fileSize: 3000 * 1024 * 1024 }, // 500 MB max file size
 });
 
 // Upload endpoint
@@ -37,12 +48,20 @@ app.post('/upload', upload.single('video'), (req, res) => {
     return res.status(400).json({ error: 'No video file uploaded' });
   }
 
-  const uploadedPath = path.join(__dirname, req.file.path);
+  // req.protocol gives 'http' or 'https'
+  // req.get('host') gives the host (e.g. 'localhost:5000' or 'mydomain.com')
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+  const fileName = req.file.filename;
+  const fileUrl = `${baseUrl}/uploads/${fileName}`;
+
   res.status(200).json({
     message: 'File uploaded successfully',
-    filePath: uploadedPath,
+    filePath: fileUrl,
   });
 });
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.post('/detect-scenes', (req, res) => {
   const { videoPath } = req.body;
@@ -51,33 +70,43 @@ app.post('/detect-scenes', (req, res) => {
     return res.status(400).json({ error: 'No video path provided' });
   }
 
-  const scriptPath = path.join(__dirname, 'detect_scenes.py');
+  try {
+    // Parse the URL to extract the filename
+    const urlObj = new URL(videoPath);
+    const fileName = path.basename(urlObj.pathname);
+    const localFilePath = path.join(__dirname, 'uploads', fileName);
 
-  console.log(`Running scene detection for video: ${videoPath}`);
-  execFile('python', [scriptPath, videoPath], (error, stdout, stderr) => {
-    if (error) {
-      console.error('Error running Python script:', error.message);
-      console.error('stderr:', stderr);
-      return res
-        .status(500)
-        .json({ error: 'Failed to detect scenes', details: error.message });
-    }
+    const scriptPath = path.join(__dirname, 'detect_scenes.py');
+    console.log(`Running scene detection for video: ${localFilePath}`);
 
-    try {
-      const result = JSON.parse(stdout);
-      if (result.error) {
-        return res.status(400).json(result);
+    execFile('python', [scriptPath, localFilePath], (error, stdout, stderr) => {
+      if (error) {
+        console.error('Error running Python script:', error.message);
+        console.error('stderr:', stderr);
+        return res
+          .status(500)
+          .json({ error: 'Failed to detect scenes', details: error.message });
       }
 
-      res.status(200).json(result);
-    } catch (parseError) {
-      console.error('Error parsing script output:', parseError.message);
-      res.status(500).json({
-        error: 'Failed to process scene data',
-        details: parseError.message,
-      });
-    }
-  });
+      try {
+        const result = JSON.parse(stdout);
+        if (result.error) {
+          return res.status(400).json(result);
+        }
+
+        res.status(200).json(result);
+      } catch (parseError) {
+        console.error('Error parsing script output:', parseError.message);
+        res.status(500).json({
+          error: 'Failed to process scene data',
+          details: parseError.message,
+        });
+      }
+    });
+  } catch (urlError) {
+    console.error('Invalid videoPath:', urlError.message);
+    return res.status(400).json({ error: 'Invalid videoPath URL' });
+  }
 });
 
 app.post('/export', async (req, res) => {
@@ -102,6 +131,11 @@ app.post('/export', async (req, res) => {
   }
 
   try {
+    // Parse the URL to extract the filename
+    const urlObj = new URL(videoPath);
+    const fileName = path.basename(urlObj.pathname);
+    const localFilePath = path.join(__dirname, 'uploads', fileName);
+
     const [targetWidth, targetHeight] = targetResolution.split('x').map(Number);
     const [virtualWidth, virtualHeight] = (virtualResolution || '1080x1920')
       .split('x')
@@ -125,7 +159,7 @@ app.post('/export', async (req, res) => {
         );
         const outputPath = path.join(outputDir, `scene_${index + 1}.mp4`);
 
-        ffmpeg(videoPath)
+        ffmpeg(localFilePath)
           // Apply complex filter
           .complexFilter(complexFilter)
           // Map the final output stream to the output file

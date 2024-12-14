@@ -26,7 +26,7 @@ export const CropCanvas = styled.canvas.withConfig({
   flex-shrink: 1;
   max-width: ${props => `calc(100% - ${props.videoWidth}px)`};
   width: auto;
-  height: auto;
+  max-height: 100%;
 `;
 
 export const VideoCanvas = styled.canvas.withConfig({

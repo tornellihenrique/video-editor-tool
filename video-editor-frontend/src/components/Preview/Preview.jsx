@@ -144,7 +144,7 @@ function Preview({
     // targetWidth = adjustedX + scale*(X_orig2 - crop.x)
     // X_orig2 = crop.x + (targetWidth - adjustedX)/scale
     const X_orig2 = crop.x + (targetWidth - adjustedX) / scale;
-
+    
     // For finalY=targetHeight:
     // targetHeight = adjustedY + scale*(Y_orig2 - crop.y)
     // Y_orig2 = crop.y + (targetHeight - adjustedY)/scale
@@ -213,6 +213,8 @@ function Preview({
     const [resWidth, resHeight] = resolution.split('x').map(Number);
 
     const container = canvasContainerRef.current;
+    if (!container || container.clientHeight <= 0) return;
+    
     const containerHeight = container.clientHeight;
 
     const videoHeight = containerHeight;

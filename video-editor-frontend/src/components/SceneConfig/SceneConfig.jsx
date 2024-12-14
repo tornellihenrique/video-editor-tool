@@ -46,7 +46,7 @@ function SceneConfig({ currentTime, scenes }) {
         type='number'
         value={start}
         onChange={e =>
-          setCurrentScene({ ...currentScene, start: e.target.value })
+          setCurrentScene({ ...currentScene, start: Number(e.target.value) || 0 })
         }
       />
       <label>End</label>
@@ -54,7 +54,7 @@ function SceneConfig({ currentTime, scenes }) {
         type='number'
         value={end}
         onChange={e =>
-          setCurrentScene({ ...currentScene, end: e.target.value })
+          setCurrentScene({ ...currentScene, end: Number(e.target.value) || 0 })
         }
       />
       <label>Crop X</label>
@@ -65,7 +65,7 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            crop: { ...currentScene.crop, x: e.target.value },
+            crop: { ...currentScene.crop, x: Number(e.target.value) || 0 },
           })
         }
       />
@@ -77,7 +77,7 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            crop: { ...currentScene.crop, y: e.target.value },
+            crop: { ...currentScene.crop, y: Number(e.target.value) || 0 },
           })
         }
       />
@@ -89,7 +89,7 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            crop: { ...currentScene.crop, width: e.target.value },
+            crop: { ...currentScene.crop, width: Number(e.target.value) || 0 },
           })
         }
       />
@@ -101,17 +101,17 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            crop: { ...currentScene.crop, height: e.target.value },
+            crop: { ...currentScene.crop, height: Number(e.target.value) || 0 },
           })
         }
       />
       <label>Scale</label>
       <SceneConfigInput
         type='number'
-        step={0.1}
+        step={0.01}
         value={scale}
         onChange={e =>
-          setCurrentScene({ ...currentScene, scale: e.target.value })
+          setCurrentScene({ ...currentScene, scale: Number(e.target.value) || 0 })
         }
       />
       <label>Position X</label>
@@ -122,7 +122,7 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            position: { ...currentScene.position, x: e.target.value },
+            position: { ...currentScene.position, x: Number(e.target.value) || 0 },
           })
         }
       />
@@ -134,7 +134,7 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            position: { ...currentScene.position, y: e.target.value },
+            position: { ...currentScene.position, y: Number(e.target.value) || 0 },
           })
         }
       />

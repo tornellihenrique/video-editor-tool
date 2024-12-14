@@ -71,9 +71,7 @@ def detect_scenes(video_path, log_file, threshold=30.0, frame_skip=10):
     for i in range(len(scene_boundaries) - 1):
         scenes_data.append({
             "start": scene_boundaries[i],
-            "end": scene_boundaries[i + 1],
-            "focus": "person_a",  # Placeholder; adjust as needed
-            "ignore": False
+            "end": scene_boundaries[i + 1]
         })
 
     return {"scenes": scenes_data}
