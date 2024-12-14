@@ -340,7 +340,11 @@ app.post('/export', async (req, res) => {
       .split('x')
       .map(Number);
 
-    const outputDir = processedPath;
+    const uniqueId = `${Date.now()}-${uuidv4()}`;
+    const outputDir = path.join(processedPath, uniqueId);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
 
     const processScene = (scene, index) => {
       return new Promise((resolve, reject) => {
@@ -360,7 +364,7 @@ app.post('/export', async (req, res) => {
           .complexFilter(complexFilter)
           // Map the final output stream to the output file
           .map('[out]')
-          .setstart(start)
+          .setStartTime(start)
           .setDuration(end - start)
           .output(outputPath)
           .on('start', commandLine => {
@@ -387,12 +391,14 @@ app.post('/export', async (req, res) => {
     // Process scenes and merge them
     Promise.all(scenes.map((scene, index) => processScene(scene, index)))
       .then(processedFiles => {
-        const finalOutputPath = path.join(outputDir, 'final_video.mp4');
+        const finalOutputPath = path.join(outputDir, `final_${uniqueId}.mp4`);
         mergeScenes(processedFiles, finalOutputPath)
           .then(() => {
             res.status(200).json({
               message: 'Video export complete',
-              file: finalOutputPath,
+              downloadUrl: `${req.protocol}://${req.get(
+                'host',
+              )}/download/${uniqueId}`,
             });
           })
           .catch(mergeError => {
@@ -417,15 +423,21 @@ app.post('/export', async (req, res) => {
   }
 });
 
-app.get('/processed/:filename', (req, res) => {
-  const { filename } = req.params;
-  const filePath = path.join(processedPath, filename);
+app.get('/download/:uniqueId', (req, res) => {
+  const { uniqueId } = req.params;
+  const filePath = path.join(processedPath, uniqueId, `final_${uniqueId}.mp4`);
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'File not found' });
   }
 
-  res.download(filePath);
+  res.download(filePath, `final_${uniqueId}.mp4`, err => {
+    if (err) {
+      console.error('Error sending file:', err.message);
+    } else {
+      console.log(`File sent: ${filePath}`);
+    }
+  });
 });
 
 // Start server
