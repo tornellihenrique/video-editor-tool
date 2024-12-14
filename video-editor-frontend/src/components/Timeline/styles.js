@@ -17,6 +17,7 @@ export const SceneMarker = styled.div.withConfig({
   background-color: ${props => (props.isActive ? '#ff5555' : '#555')};
   top: 0;
   cursor: pointer;
+  outline: 1px solid black;
 `;
 
 export const PlaybackHandle = styled.div`

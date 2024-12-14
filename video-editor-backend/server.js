@@ -5,6 +5,9 @@ const multer = require('multer');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 
+const db = require('./db');
+const { v4: uuidv4 } = require('uuid');
+
 const { exec, execFile } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 
@@ -13,36 +16,37 @@ const { mergeScenes, getFilters, getComplexFilter } = require('./utils.js');
 const app = express();
 const PORT = 3000;
 
-// Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// CORS
 app.use(
   cors({
     origin: '*',
-    credentials: true, //access-control-allow-credentials:true
+    credentials: true,
     optionSuccessStatus: 200,
   }),
 );
 
-// File upload configuration
+const uploadsPath = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath));
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+    cb(null, uploadsPath);
   },
   filename: (req, file, cb) => {
-    const extension = path.extname(file.originalname); // Extract the file extension
-    cb(null, `${Date.now()}${extension}`); // Save with a timestamp and original extension
+    const uniqueName = `${Date.now()}-${uuidv4()}${path.extname(
+      file.originalname,
+    )}`;
+    cb(null, uniqueName);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 3000 * 1024 * 1024 }, // 500 MB max file size
+  limits: { fileSize: 3000 * 1024 * 1024 }, // 3 GB max file size
 });
 
-// Upload endpoint
 app.post('/upload', upload.single('video'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file uploaded' });
@@ -51,17 +55,40 @@ app.post('/upload', upload.single('video'), (req, res) => {
   // req.protocol gives 'http' or 'https'
   // req.get('host') gives the host (e.g. 'localhost:5000' or 'mydomain.com')
   const baseUrl = `${req.protocol}://${req.get('host')}`;
-
   const fileName = req.file.filename;
   const fileUrl = `${baseUrl}/uploads/${fileName}`;
 
-  res.status(200).json({
-    message: 'File uploaded successfully',
-    filePath: fileUrl,
-  });
+  db.run(
+    `INSERT INTO videos (fileUrl, originalName) VALUES (?, ?)`,
+    [fileUrl, req.file.originalname],
+    function (err) {
+      if (err) {
+        console.error('DB insert error:', err);
+        return res
+          .status(500)
+          .json({ error: 'Failed to store video in database' });
+      }
+      res.status(200).json({
+        message: 'File uploaded successfully',
+        filePath: fileUrl, // We keep naming as 'filePath' for backward compatibility
+      });
+    },
+  );
 });
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.get('/videos', (req, res) => {
+  db.all(
+    'SELECT id, fileUrl, originalName, createdAt FROM videos ORDER BY createdAt DESC',
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error('DB select error:', err);
+        return res.status(500).json({ error: 'Failed to fetch videos' });
+      }
+      res.json(rows);
+    },
+  );
+});
 
 app.post('/detect-scenes', (req, res) => {
   const { videoPath } = req.body;
@@ -71,10 +98,8 @@ app.post('/detect-scenes', (req, res) => {
   }
 
   try {
-    // Parse the URL to extract the filename
-    const urlObj = new URL(videoPath);
-    const fileName = path.basename(urlObj.pathname);
-    const localFilePath = path.join(__dirname, 'uploads', fileName);
+    const fileName = path.basename(new URL(videoPath).pathname);
+    const localFilePath = path.join(uploadsPath, fileName);
 
     const scriptPath = path.join(__dirname, 'detect_scenes.py');
     console.log(`Running scene detection for video: ${localFilePath}`);
