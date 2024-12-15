@@ -31,7 +31,11 @@ function Preview({
     height: 0,
   });
 
-  // Drag state
+  // UI zoom states: these do not affect final configs, just a visual help.
+  const [cropPreviewZoom, setCropPreviewZoom] = useState(1.0);
+  const [finalCanvasZoom, setFinalCanvasZoom] = useState(1.0);
+
+  // Drag state for final rectangle interaction
   const [isDragging, setIsDragging] = useState(false);
   const [dragMode, setDragMode] = useState(null); // 'move-final', 'scale-final'
   const [activeHandle, setActiveHandle] = useState(null);
@@ -63,20 +67,15 @@ function Preview({
   };
 
   function computeFinalOutputRect(scene) {
-    // This function maps how the final output area (after scaling/position) fits into the original video.
-    const { crop, scale, position } = scene;
+    const { scale, position } = scene;
     const [resW, resH] = resolution.split('x').map(Number);
     const [vResW, vResH] = virtualResolution.split('x').map(Number);
 
-    // Based on the math in the original code, finalRect simplifies to:
-    // finalW = resW / scale
-    // finalH = resH / scale
-    // finalX = - ( (position.x * resW) / (vResW * scale) )
-    // finalY = - ( (position.y * resH) / (vResH * scale) )
-
+    // final width/height in input video coords after scale:
     const finalW = resW / scale;
     const finalH = resH / scale;
 
+    // finalX, finalY are offset in input video coords:
     const finalX = -((position.x * resW) / (vResW * scale));
     const finalY = -((position.y * resH) / (vResH * scale));
 
@@ -94,6 +93,8 @@ function Preview({
     canvas.height = targetHeight;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(finalCanvasZoom, finalCanvasZoom);
 
     const videoAspectRatio = video.videoWidth / video.videoHeight;
     const targetAspectRatio = targetWidth / targetHeight;
@@ -127,6 +128,7 @@ function Preview({
         drawWidth,
         drawHeight,
       );
+      ctx.restore();
       return;
     }
 
@@ -153,6 +155,7 @@ function Preview({
       crop.height,
     );
     ctx.restore();
+    ctx.restore();
   };
 
   const drawCropPreview = activeScene => {
@@ -162,11 +165,16 @@ function Preview({
 
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!activeScene) return;
+    ctx.save();
+    ctx.scale(cropPreviewZoom, cropPreviewZoom);
+
+    if (!activeScene) {
+      ctx.restore();
+      return;
+    }
 
     const { crop } = activeScene;
-    // Draw the cropped portion as a reference (red rectangle).
-    // We will NOT provide resize handles for the crop anymore.
+    // Draw the cropped portion as a reference.
     ctx.drawImage(
       video,
       crop.x,
@@ -179,12 +187,12 @@ function Preview({
       crop.height,
     );
 
-    // Outline the crop area in red (reference only)
+    // Outline the crop area (just as reference)
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, crop.width, crop.height);
 
-    // Draw the final output rectangle (white rectangle) with handles.
+    // Draw final output rectangle with handles
     const finalRect = computeFinalOutputRect(activeScene);
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.fillRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
@@ -192,6 +200,8 @@ function Preview({
     ctx.lineWidth = 2;
     ctx.strokeRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
     drawFinalHandles(ctx, finalRect, 'white');
+
+    ctx.restore();
   };
 
   const drawFinalHandles = (ctx, rect, color) => {
@@ -199,7 +209,7 @@ function Preview({
     const handleSize = 10;
     ctx.fillStyle = color;
 
-    // Only corners for scaling
+    // Corner handles for scaling
     const handles = [
       { name: 'top-left', x: x, y: y },
       { name: 'top-right', x: x + W, y: y },
@@ -307,13 +317,30 @@ function Preview({
     return null;
   };
 
-  const getMousePosInCanvas = e => {
-    const rect = cropPreviewRef.current.getBoundingClientRect();
-    const scaleX = cropPreviewRef.current.width / rect.width;
-    const scaleY = cropPreviewRef.current.height / rect.height;
-    const mx = (e.clientX - rect.left) * scaleX;
-    const my = (e.clientY - rect.top) * scaleY;
+  const getMousePosInCanvas = (e, canvas, zoom) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    let mx = (e.clientX - rect.left) * scaleX;
+    let my = (e.clientY - rect.top) * scaleY;
+
+    // Adjust by inverse of UI zoom to map back to original coords
+    mx /= zoom;
+    my /= zoom;
+
     return { mx, my };
+  };
+
+  const handleWheelCrop = e => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+    setCropPreviewZoom(prev => Math.max(0.1, Math.min(prev * zoomFactor, 10)));
+  };
+
+  const handleWheelFinal = e => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+    setFinalCanvasZoom(prev => Math.max(0.1, Math.min(prev * zoomFactor, 10)));
   };
 
   const handleMouseDown = e => {
@@ -322,12 +349,16 @@ function Preview({
     const { scene, index } = getActiveScene();
     if (!scene || index === -1) return;
 
-    const { mx, my } = getMousePosInCanvas(e);
+    const { mx, my } = getMousePosInCanvas(
+      e,
+      cropPreviewRef.current,
+      cropPreviewZoom,
+    );
 
-    // Final rect interaction: move or scale
+    // Final rect interaction
     const finalRect = computeFinalOutputRect(scene);
 
-    // Check if clicking a corner handle for scaling finalRect
+    // Check corner handles for scale
     const corner = hitTestCornerHandles(mx, my, finalRect);
     if (corner) {
       setIsDragging(true);
@@ -335,12 +366,9 @@ function Preview({
       setActiveHandle(corner);
       setDragStart({ x: mx, y: my });
 
-      // Store initial scene and finalRect states for reference
       const initialFinalRect = { ...finalRect };
       const [resW, resH] = resolution.split('x').map(Number);
       const [vResW, vResH] = virtualResolution.split('x').map(Number);
-
-      // Store initial values to help recalculate position and scale with stable center
       const initialCenter = {
         x: initialFinalRect.x + initialFinalRect.width / 2,
         y: initialFinalRect.y + initialFinalRect.height / 2,
@@ -359,7 +387,7 @@ function Preview({
       return;
     }
 
-    // Check if clicking inside finalRect to move it
+    // Check if inside finalRect for move
     if (
       mx >= finalRect.x &&
       mx <= finalRect.x + finalRect.width &&
@@ -399,16 +427,18 @@ function Preview({
     const { scene, index } = getActiveScene();
     if (!scene || index === -1) return;
 
-    const { mx, my } = getMousePosInCanvas(e);
+    const { mx, my } = getMousePosInCanvas(
+      e,
+      cropPreviewRef.current,
+      cropPreviewZoom,
+    );
 
     const dx = mx - dragStart.x;
     const dy = my - dragStart.y;
 
     if (dragMode === 'move-final') {
-      // Move finalRect by translating its center
       const {
         scale: initScale,
-        position: initPos,
         center: initCenter,
         resW,
         resH,
@@ -416,15 +446,12 @@ function Preview({
         vResH,
       } = initialState;
 
-      // New center after dragging
       const newCenterX = initCenter.x + dx;
       const newCenterY = initCenter.y + dy;
 
       const finalW = resW / initScale;
       const finalH = resH / initScale;
 
-      // finalX = finalCenterX - finalW/2
-      // position.x = -finalX * (vResW * scale)/resW
       const finalX_new = newCenterX - finalW / 2;
       const finalY_new = newCenterY - finalH / 2;
 
@@ -435,7 +462,6 @@ function Preview({
     } else if (dragMode === 'scale-final') {
       const {
         scale: initScale,
-        position: initPos,
         finalRect: initFinalRect,
         center: initCenter,
         resW,
@@ -444,29 +470,10 @@ function Preview({
         vResH,
       } = initialState;
 
-      // We will scale uniformly.
-      // Determine scale factor by how far user dragged from the corner.
-      // Let's say user grabbed top-left corner: moving that corner outwards or inwards changes width and height.
-      // We'll use the difference in width as reference. The finalRect width = resW/scale.
-      // If user moves handle outwards by dx relative to initial state, new width = initial width + some delta.
-      // We always keep aspect ratio the same, so we use the magnitude of diagonal move to scale uniformly.
-
       const initW = initFinalRect.width;
       const initH = initFinalRect.height;
 
-      // Depending on the corner, dx and dy represent how we want to change size.
-      // We'll find a uniform factor: factor = newSize / initSize, use width or height consistently.
-      // We'll base on width change primarily.
-      // If corner is top-left, decreasing x and y increases size. If the user drags outward, width increases.
-      // Let's measure how the user wants to change the width or height:
-      let desiredW = initW;
-      let desiredH = initH;
-
-      // We'll consider that dragging away from the center in either dimension scales up, towards the center scales down.
-      // For simplicity, let's just use the largest absolute scaled dimension to ensure uniform scaling.
-      // Compare how much the user moved in horizontal/vertical direction relative to the center.
-      // Actually, let's consider that dragging from a corner changes size proportionally.
-      // Distance from corner to center initially:
+      // Determine new half-size based on corner drag
       const cornerX = activeHandle.includes('left')
         ? initFinalRect.x
         : initFinalRect.x + initW;
@@ -474,43 +481,30 @@ function Preview({
         ? initFinalRect.y
         : initFinalRect.y + initH;
 
-      const initCornerOffsetX = cornerX - initCenter.x;
-      const initCornerOffsetY = cornerY - initCenter.y;
-
-      // After drag, the user moves the corner:
       const newCornerX = cornerX + dx;
       const newCornerY = cornerY + dy;
 
-      // Calculate new width/height from the new corner position relative to center:
       const newHalfWidth = Math.abs(newCornerX - initCenter.x);
       const newHalfHeight = Math.abs(newCornerY - initCenter.y);
 
-      // Initial half width/height:
       const initHalfWidth = initW / 2;
       const initHalfHeight = initH / 2;
 
-      // Scale factor based on width or height
       const scaleFactorW = newHalfWidth / initHalfWidth;
       const scaleFactorH = newHalfHeight / initHalfHeight;
-
-      // Use the larger factor to maintain aspect ratio uniformly
       const scaleFactor = Math.max(scaleFactorW, scaleFactorH);
 
       const newW = initW * scaleFactor;
       const newH = initH * scaleFactor;
 
-      // newW = resW / newScale => newScale = resW / newW
-      // We keep center stable:
-      const newScale = resW / newW; // uniform scaling
+      const newScale = resW / newW;
 
-      // Now recalculate position to maintain the same center
       const finalX_new = initCenter.x - newW / 2;
       const finalY_new = initCenter.y - newH / 2;
 
       const newPosX = -(finalX_new * (vResW * newScale)) / resW;
       const newPosY = -(finalY_new * (vResH * newScale)) / resH;
 
-      // Update scene
       updateScene(index, {
         scale: newScale,
         position: { x: newPosX, y: newPosY },
@@ -548,9 +542,15 @@ function Preview({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
+          onWheel={handleWheelCrop}
           style={{ cursor: 'default' }}
         />
-        <VideoCanvas ref={canvasRef} videoWidth={videoDimensions.width} />
+        <VideoCanvas
+          ref={canvasRef}
+          videoWidth={videoDimensions.width}
+          onWheel={handleWheelFinal}
+          style={{ cursor: 'default' }}
+        />
       </CanvasContainer>
       <VideoElement ref={videoRef} />
     </PreviewContainer>
