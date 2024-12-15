@@ -20,6 +20,15 @@ function SceneConfig({ currentTime, scenes }) {
   const positionx = currentScene?.position?.x || 0;
   const positiony = currentScene?.position?.y || 0;
 
+  const resetCurrentScene = () => {
+    setCurrentScene({
+      ...currentScene,
+      crop: { x: 0, y: 0, width: 1280, height: 720 },
+      scale: 1.0,
+      position: { x: 0, y: 0 },
+    });
+  };
+
   useEffect(() => {
     let foundIndex = -1;
     const foundScene = scenes.find((scene, index) => {
@@ -46,7 +55,10 @@ function SceneConfig({ currentTime, scenes }) {
         type='number'
         value={start}
         onChange={e =>
-          setCurrentScene({ ...currentScene, start: Number(e.target.value) || 0 })
+          setCurrentScene({
+            ...currentScene,
+            start: Number(e.target.value) || 0,
+          })
         }
       />
       <label>End</label>
@@ -111,7 +123,10 @@ function SceneConfig({ currentTime, scenes }) {
         step={0.01}
         value={scale}
         onChange={e =>
-          setCurrentScene({ ...currentScene, scale: Number(e.target.value) || 0 })
+          setCurrentScene({
+            ...currentScene,
+            scale: Number(e.target.value) || 0,
+          })
         }
       />
       <label>Position X</label>
@@ -122,7 +137,10 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            position: { ...currentScene.position, x: Number(e.target.value) || 0 },
+            position: {
+              ...currentScene.position,
+              x: Number(e.target.value) || 0,
+            },
           })
         }
       />
@@ -134,10 +152,16 @@ function SceneConfig({ currentTime, scenes }) {
         onChange={e =>
           setCurrentScene({
             ...currentScene,
-            position: { ...currentScene.position, y: Number(e.target.value) || 0 },
+            position: {
+              ...currentScene.position,
+              y: Number(e.target.value) || 0,
+            },
           })
         }
       />
+      <button style={{ margin: '0 20px' }} onClick={resetCurrentScene}>
+        Reset
+      </button>
     </SceneConfigContainer>
   );
 }
