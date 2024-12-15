@@ -8,7 +8,7 @@ import {
   VideoItem,
 } from './styles';
 
-function Sidebar({ videos, onSelectVideo, onUpload }) {
+function Sidebar({ videos, onSelectVideo, onUpload, onDelete }) {
   const [file, setFile] = useState(null);
 
   const handleUploadChange = e => {
@@ -35,8 +35,26 @@ function Sidebar({ videos, onSelectVideo, onUpload }) {
       </SidebarHeader>
       <VideosList>
         {videos.map(video => (
-          <VideoItem key={video.id} onClick={() => onSelectVideo(video)}>
-            {video.originalName}
+          <VideoItem key={video.id}>
+            <span
+              onClick={() => onSelectVideo(video)}
+              style={{ cursor: 'pointer', flex: 1 }}
+            >
+              {video.originalName}
+            </span>
+            <button
+              style={{
+                marginLeft: '10px',
+                background: 'red',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+              }}
+              onClick={() => onDelete(video.id)}
+            >
+              X
+            </button>
           </VideoItem>
         ))}
       </VideosList>

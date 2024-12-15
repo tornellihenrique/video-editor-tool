@@ -440,6 +440,49 @@ app.get('/download/:uniqueId', (req, res) => {
   });
 });
 
+app.delete('/videos/:id', (req, res) => {
+  const videoId = req.params.id;
+
+  // Get the file URL from the database before deletion
+  db.get('SELECT fileUrl FROM videos WHERE id = ?', [videoId], (err, row) => {
+    if (err) {
+      console.error('DB fetch error:', err);
+      return res.status(500).json({ error: 'Failed to fetch video details' });
+    }
+
+    if (!row) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    // Parse the URL to extract the filename
+    const urlObj = new URL(row.fileUrl);
+    const fileName = path.basename(urlObj.pathname);
+    const localFilePath = path.join(__dirname, 'uploads', fileName);
+
+    // Delete the video file from the filesystem
+    fs.unlink(localFilePath, unlinkErr => {
+      if (unlinkErr && unlinkErr.code !== 'ENOENT') {
+        console.error('File delete error:', unlinkErr);
+        return res.status(500).json({ error: 'Failed to delete video file' });
+      }
+
+      // Delete the video and associated scenes from the database
+      db.run('DELETE FROM videos WHERE id = ?', [videoId], function (dbErr) {
+        if (dbErr) {
+          console.error('DB delete error:', dbErr);
+          return res
+            .status(500)
+            .json({ error: 'Failed to delete video from database' });
+        }
+
+        res.status(200).json({
+          message: 'Video file and its associated data deleted successfully',
+        });
+      });
+    });
+  });
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);

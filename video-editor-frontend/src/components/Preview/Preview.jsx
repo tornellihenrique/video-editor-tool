@@ -6,6 +6,9 @@ import {
   CanvasContainer,
   CropCanvas,
   VideoCanvas,
+  InfoContainer,
+  InfoBadgeContainer,
+  InfoBadge,
 } from './styles';
 
 function Preview({
@@ -45,6 +48,8 @@ function Preview({
   const [activeHandle, setActiveHandle] = useState(null);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [initialState, setInitialState] = useState(null);
+
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   const updateScene = useEditorStore(state => state.updateScene);
 
@@ -223,6 +228,11 @@ function Preview({
       { name: 'top-right', x: x + W, y: y },
       { name: 'bottom-left', x: x, y: y + H },
       { name: 'bottom-right', x: x + W, y: y + H },
+
+      { name: 'middle-left', x: x, y: y + H / 2 },
+      { name: 'middle-right', x: x + W, y: y + H / 2 },
+      { name: 'middle-top', x: x + W / 2, y: y },
+      { name: 'middle-bottom', x: x + W / 2, y: y + H },
     ];
 
     handles.forEach(h => {
@@ -325,6 +335,28 @@ function Preview({
     return null;
   };
 
+  const hitTestMiddleHandles = (mx, my, rect) => {
+    const { x, y, width: W, height: H } = rect;
+    const handleSize = getHandleSize();
+    const handles = [
+      { name: 'middle-left', x: x, y: y + H / 2 },
+      { name: 'middle-right', x: x + W, y: y + H / 2 },
+      { name: 'middle-top', x: x + W / 2, y: y },
+      { name: 'middle-bottom', x: x + W / 2, y: y + H },
+    ];
+    for (let h of handles) {
+      if (
+        mx >= h.x - handleSize / 2 &&
+        mx <= h.x + handleSize / 2 &&
+        my >= h.y - handleSize / 2 &&
+        my <= h.y + handleSize / 2
+      ) {
+        return h.name;
+      }
+    }
+    return null;
+  };
+
   const getMousePosInCanvas = (e, canvas, zoom, pan) => {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -344,13 +376,45 @@ function Preview({
   const handleWheelCrop = e => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-    setCropPreviewZoom(prev => Math.max(0.1, Math.min(prev * zoomFactor, 10)));
+
+    const canvas = cropPreviewRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    setCropPreviewZoom(prevZoom => {
+      const newZoom = Math.max(0.1, Math.min(prevZoom * zoomFactor, 10));
+      const zoomRatio = newZoom / prevZoom;
+
+      setCropPreviewPan(prevPan => ({
+        x: prevPan.x - (mouseX / newZoom - mouseX / prevZoom),
+        y: prevPan.y - (mouseY / newZoom - mouseY / prevZoom),
+      }));
+
+      return newZoom;
+    });
   };
 
   const handleWheelFinal = e => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-    setFinalCanvasZoom(prev => Math.max(0.1, Math.min(prev * zoomFactor, 10)));
+
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    setFinalCanvasZoom(prevZoom => {
+      const newZoom = Math.max(0.1, Math.min(prevZoom * zoomFactor, 10));
+      const zoomRatio = newZoom / prevZoom;
+
+      setFinalCanvasPan(prevPan => ({
+        x: prevPan.x - (mouseX / newZoom - mouseX / prevZoom),
+        y: prevPan.y - (mouseY / newZoom - mouseY / prevZoom),
+      }));
+
+      return newZoom;
+    });
   };
 
   useEffect(() => {
@@ -358,11 +422,13 @@ function Preview({
     const cropPreview = cropPreviewRef.current;
     if (!canvas || !cropPreview) return;
 
-    canvas.addEventListener('wheel', handleWheelFinal, { passive: false });
+    // Temp disabled
+    // canvas.addEventListener('wheel', handleWheelFinal, { passive: false });
     cropPreview.addEventListener('wheel', handleWheelCrop, { passive: false });
 
     return () => {
-      canvas.removeEventListener('wheel', handleWheelFinal);
+      // Temp disabled
+      // canvas.removeEventListener('wheel', handleWheelFinal);
       cropPreview.removeEventListener('wheel', handleWheelCrop);
     };
   }, []);
@@ -387,7 +453,8 @@ function Preview({
         setDragMode('pan-crop');
         setDragStart({ x: e.clientX, y: e.clientY });
         setInitialState({ pan: { ...cropPreviewPan } });
-      } else if (isFinalCanvas) {
+      } else if (isFinalCanvas && false) {
+        // Temp disabled
         setDragMode('pan-final');
         setDragStart({ x: e.clientX, y: e.clientY });
         setInitialState({ pan: { ...finalCanvasPan } });
@@ -446,6 +513,35 @@ function Preview({
       return;
     }
 
+    // Check middle handles for horizontal and vertical movement
+    const middle = hitTestMiddleHandles(mx, my, finalRect);
+    if (middle) {
+      setIsDragging(true);
+      setDragMode('move-final');
+      setActiveHandle(middle);
+      setDragStart({ x: mx, y: my });
+
+      const initialFinalRect = { ...finalRect };
+      const [resW, resH] = resolution.split('x').map(Number);
+      const [vResW, vResH] = virtualResolution.split('x').map(Number);
+      const initialCenter = {
+        x: initialFinalRect.x + initialFinalRect.width / 2,
+        y: initialFinalRect.y + initialFinalRect.height / 2,
+      };
+
+      setInitialState({
+        scale: scene.scale,
+        position: { ...scene.position },
+        finalRect: initialFinalRect,
+        center: initialCenter,
+        resW,
+        resH,
+        vResW,
+        vResH,
+      });
+      return;
+    }
+
     // Check if inside finalRect for move
     if (
       mx >= finalRect.x &&
@@ -480,7 +576,22 @@ function Preview({
   };
 
   const handleMouseMove = e => {
-    if (!isDragging) return;
+    if (!isDragging) {
+      const isCropCanvas = e.currentTarget === cropPreviewRef.current;
+      if (!isCropCanvas) return;
+
+      const { mx, my } = getMousePosInCanvas(
+        e,
+        cropPreviewRef.current,
+        cropPreviewZoom,
+        cropPreviewPan,
+      );
+
+      setMousePos({ x: mx, y: my });
+
+      return;
+    }
+
     e.preventDefault();
 
     if (dragMode === 'pan-crop' || dragMode === 'pan-final') {
@@ -502,9 +613,6 @@ function Preview({
       return;
     }
 
-    const { scene, index } = getActiveScene();
-    if (!scene || index === -1) return;
-
     const isCropCanvas = e.currentTarget === cropPreviewRef.current;
     if (!isCropCanvas) return; // final rect edit only on crop preview
 
@@ -515,8 +623,13 @@ function Preview({
       cropPreviewPan,
     );
 
-    const dx = mx - dragStart.x;
-    const dy = my - dragStart.y;
+    setMousePos({ x: mx, y: my });
+
+    const { scene, index } = getActiveScene();
+    if (!scene || index === -1) return;
+
+    let dx = mx - dragStart.x;
+    let dy = my - dragStart.y;
 
     if (dragMode === 'move-final') {
       const {
@@ -527,6 +640,17 @@ function Preview({
         vResW,
         vResH,
       } = initialState;
+
+      if (activeHandle) {
+        if (activeHandle.includes('left') || activeHandle.includes('right')) {
+          dy = 0;
+        } else if (
+          activeHandle.includes('top') ||
+          activeHandle.includes('bottom')
+        ) {
+          dx = 0;
+        }
+      }
 
       const newCenterX = initCenter.x + dx;
       const newCenterY = initCenter.y + dy;
@@ -615,6 +739,28 @@ function Preview({
 
   return (
     <PreviewContainer>
+      <InfoContainer>
+        <InfoBadgeContainer>
+          <InfoBadge>{`Zoom: ${cropPreviewZoom.toFixed(2)}`}</InfoBadge>
+          <InfoBadge>{`Pan: ${cropPreviewPan.x.toFixed(
+            2,
+          )} - ${cropPreviewPan.y.toFixed(2)}`}</InfoBadge>
+          <InfoBadge
+            style={{ cursor: 'pointer' }}
+            onClick={e => {
+              setCropPreviewZoom(1);
+              setCropPreviewPan({ x: 0, y: 0 });
+            }}
+          >
+            {'Reset'}
+          </InfoBadge>
+        </InfoBadgeContainer>
+        <InfoBadgeContainer>
+          <InfoBadge>{`Mouse: ${mousePos.x.toFixed(2)} - ${mousePos.y.toFixed(
+            2,
+          )}`}</InfoBadge>
+        </InfoBadgeContainer>
+      </InfoContainer>
       <CanvasContainer ref={canvasContainerRef}>
         <CropCanvas
           ref={cropPreviewRef}

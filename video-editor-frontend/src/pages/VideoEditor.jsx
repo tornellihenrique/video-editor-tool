@@ -108,27 +108,56 @@ function VideoEditor() {
     setLoading(true);
     setError(null);
     try {
-      const parsedScenes = video.scenes.map(scene => ({
-        start: scene.start,
-        end: scene.end,
-        crop: { x: 0, y: 0, width: 1280, height: 720 },
-        scale: 1.0,
-        position: { x: 0, y: 0 },
-      }));
-
-      setScenes(parsedScenes);
-
-      // Load the video
-      setVideoUrl(video.fileUrl);
-
       if (videoRef.current) {
         videoRef.current.src = video.fileUrl;
         videoRef.current.load();
         videoRef.current.onloadedmetadata = () => {
+          const originalResolution = {
+            width: videoRef.current.videoWidth,
+            height: videoRef.current.videoHeight,
+          };
+
+          const [targetWidth, targetHeight] = resolution.split('x').map(Number);
+          const originalAspectRatio =
+            originalResolution.width / originalResolution.height;
+          const targetAspectRatio = targetWidth / targetHeight;
+
+          const parsedScenes = video.scenes.map(scene => {
+            let scale, position;
+
+            // Calculate scale
+            if (originalAspectRatio < targetAspectRatio) {
+              scale = targetWidth / originalResolution.width;
+            } else {
+              scale = targetHeight / originalResolution.height;
+            }
+
+            // Calculate position
+            const scaledWidth = originalResolution.width * scale;
+            const scaledHeight = originalResolution.height * scale;
+            position = {
+              x: (targetWidth - scaledWidth) / 2,
+              y: (targetHeight - scaledHeight) / 2,
+            };
+
+            return {
+              start: scene.start,
+              end: scene.end,
+              crop: {
+                x: 0,
+                y: 0,
+                width: originalResolution.width,
+                height: originalResolution.height,
+              },
+              scale,
+              position,
+            };
+          });
+
+          setScenes(parsedScenes);
           setDuration(videoRef.current.duration);
-          const time = 0.0;
-          setCurrentTime(time);
-          videoRef.current.currentTime = time;
+          setCurrentTime(0.0);
+          videoRef.current.currentTime = 0.0;
         };
       }
     } catch (err) {
@@ -160,7 +189,7 @@ function VideoEditor() {
       const video = await uploadRes.json();
 
       await fetchVideos(); // refresh the list of videos
-      await processVideo(video); // run detect scenes and load it
+      processVideo(video); // run detect scenes and load it
     } catch (err) {
       console.error(err);
       setError(err.message);
@@ -169,9 +198,38 @@ function VideoEditor() {
     }
   };
 
-  const handleSelectVideo = async video => {
-    // When selecting a video from the list, process it as well
-    await processVideo(video);
+  const handleDelete = async videoId => {
+    if (!window.confirm('Are you sure you want to delete this video?')) return;
+
+    setLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/videos/${videoId}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to delete video');
+      }
+
+      // If the deleted video is currently selected, deselect it
+      if (videoId === videos.find(video => video.fileUrl === videoUrl)?.id) {
+        setVideoUrl(null);
+        setScenes([]);
+        setCurrentTime(0);
+        setDuration(0);
+      }
+
+      await fetchVideos(); // Refresh the video list after deletion
+    } catch (err) {
+      console.error('Error deleting video:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelectVideo = video => {
+    processVideo(video);
   };
 
   const handlePlayPause = () => {
@@ -208,6 +266,7 @@ function VideoEditor() {
         videos={videos}
         onSelectVideo={handleSelectVideo}
         onUpload={handleUpload}
+        onDelete={handleDelete}
       />
       <MainContainer>
         <Header>

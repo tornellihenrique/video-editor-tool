@@ -1,9 +1,11 @@
 import styled from 'styled-components';
 
 export const PreviewContainer = styled.div`
+  display: flex;
+  flex-flow: column;
   width: 100%;
   height: calc(100vh - 225px);
-  background-color: #000;
+  background-color: #111;
 `;
 
 export const VideoElement = styled.video`
@@ -18,7 +20,7 @@ export const CanvasContainer = styled.div`
   height: 100%;
   overflow: hidden;
   position: relative;
-  padding: 20px;
+  padding: 10px;
   box-sizing: border-box;
   background-color: #111;
 `;
@@ -42,4 +44,27 @@ export const VideoCanvas = styled.canvas.withConfig({
   width: ${props => `${props.videoWidth}px`};
   background-color: #000;
   border-radius: 15px;
+`;
+
+export const InfoContainer = styled.div`
+  display: flex;
+  justify-content: space-between;
+  background-color: #454545;
+  padding: 3px;
+  margin: 10px 10px 0px 10px;
+  border-radius: 7px;
+  box-sizing: border-box;
+`;
+
+export const InfoBadgeContainer = styled.div`
+  display: flex;
+`;
+
+export const InfoBadge = styled.div`
+  background-color: black;
+  color: white;
+  padding: 5px;
+  font-size: 11px;
+  border-radius: 8px;
+  margin-right: 5px;
 `;
