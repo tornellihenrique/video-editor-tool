@@ -101,27 +101,43 @@ function Timeline({
     e.preventDefault();
     if (!timelineRef.current) return;
 
-    const rect = timelineRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
+    setZoom(prev => {
+      const zoomFactor = 0.5;
+      const newZoom = Math.max(
+        e.deltaY < 0 ? prev + zoomFactor : prev - zoomFactor,
+        0.5,
+      );
 
-    const oldZoom = zoom;
-    const zoomFactor = 1;
-    const newZoom = e.deltaY < 0 ? zoom + zoomFactor : zoom - zoomFactor;
-    if (newZoom < 0.1) return; // min zoom
+      if (newZoom >= 0.1) {
+        setOffset(prev => {
+          const visibleRange = duration / newZoom;
 
-    // The time under the mouse cursor before zooming
-    const timeUnderCursor = offset + mouseX / pixelsPerSecond();
+          const newOffset = clampOffset(currentTime - visibleRange / 2);
 
-    setZoom(newZoom);
+          return clampOffset(newOffset);
+        });
 
-    // After zooming, we want the timeUnderCursor to remain at the same mouseX.
-    // Solve for offset:
-    // mouseX = (timeUnderCursor - offset) * pixelsPerSecond(newZoom)
-    // offset = timeUnderCursor - mouseX / pixelsPerSecond(newZoom)
-    const newOffset =
-      timeUnderCursor - mouseX / ((rect.width * newZoom) / duration);
-    setOffset(clampOffset(newOffset));
+        return newZoom;
+      }
+    });
   };
+
+  useEffect(() => {}, [zoom, duration]);
+
+  useEffect(() => {
+    const timeline = timelineRef.current;
+    if (!timeline) return;
+
+    const targetHandle = e => {
+      handleWheel(e, currentTime);
+    };
+
+    timeline.addEventListener('wheel', targetHandle, { passive: false });
+
+    return () => {
+      timeline.removeEventListener('wheel', targetHandle);
+    };
+  }, [currentTime]);
 
   // Panning with middle mouse
   const handleMouseDown = e => {
@@ -257,7 +273,6 @@ function Timeline({
     <TimelineContainer
       ref={timelineRef}
       onClick={handleSeek}
-      onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

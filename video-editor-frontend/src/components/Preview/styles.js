@@ -18,6 +18,9 @@ export const CanvasContainer = styled.div`
   height: 100%;
   overflow: hidden;
   position: relative;
+  padding: 20px;
+  box-sizing: border-box;
+  background-color: #111;
 `;
 
 export const CropCanvas = styled.canvas.withConfig({
@@ -27,6 +30,8 @@ export const CropCanvas = styled.canvas.withConfig({
   max-width: ${props => `calc(100% - ${props.videoWidth}px)`};
   width: auto;
   max-height: 100%;
+  background-color: #000;
+  border-radius: 15px;
 `;
 
 export const VideoCanvas = styled.canvas.withConfig({
@@ -35,4 +40,6 @@ export const VideoCanvas = styled.canvas.withConfig({
   flex-shrink: 0;
   height: 100%;
   width: ${props => `${props.videoWidth}px`};
+  background-color: #000;
+  border-radius: 15px;
 `;

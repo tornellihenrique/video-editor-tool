@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { useEditorStore } from '../../store/editorStore';
 import {
   PreviewContainer,
@@ -31,13 +31,17 @@ function Preview({
     height: 0,
   });
 
-  // UI zoom states: these do not affect final configs, just a visual help.
+  // UI states for zoom and pan (just visual, no effect on final result)
   const [cropPreviewZoom, setCropPreviewZoom] = useState(1.0);
   const [finalCanvasZoom, setFinalCanvasZoom] = useState(1.0);
 
-  // Drag state for final rectangle interaction
+  const [cropPreviewPan, setCropPreviewPan] = useState({ x: 0, y: 0 });
+  const [finalCanvasPan, setFinalCanvasPan] = useState({ x: 0, y: 0 });
+
+  // Drag state for final rectangle interaction or panning
+  // dragMode can be: 'move-final', 'scale-final', 'pan-crop', 'pan-final'
   const [isDragging, setIsDragging] = useState(false);
-  const [dragMode, setDragMode] = useState(null); // 'move-final', 'scale-final'
+  const [dragMode, setDragMode] = useState(null);
   const [activeHandle, setActiveHandle] = useState(null);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [initialState, setInitialState] = useState(null);
@@ -66,16 +70,18 @@ function Preview({
     return { scene: scenesRef.current[index] || null, index };
   };
 
+  const getHandleSize = () => {
+    return 15 / cropPreviewZoom;
+  };
+
   function computeFinalOutputRect(scene) {
     const { scale, position } = scene;
     const [resW, resH] = resolution.split('x').map(Number);
     const [vResW, vResH] = virtualResolution.split('x').map(Number);
 
-    // final width/height in input video coords after scale:
     const finalW = resW / scale;
     const finalH = resH / scale;
 
-    // finalX, finalY are offset in input video coords:
     const finalX = -((position.x * resW) / (vResW * scale));
     const finalY = -((position.y * resH) / (vResH * scale));
 
@@ -94,7 +100,9 @@ function Preview({
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
+    // Apply zoom and pan for final canvas viewing (does not affect final result)
     ctx.scale(finalCanvasZoom, finalCanvasZoom);
+    ctx.translate(finalCanvasPan.x, finalCanvasPan.y);
 
     const videoAspectRatio = video.videoWidth / video.videoHeight;
     const targetAspectRatio = targetWidth / targetHeight;
@@ -155,6 +163,7 @@ function Preview({
       crop.height,
     );
     ctx.restore();
+
     ctx.restore();
   };
 
@@ -166,7 +175,9 @@ function Preview({
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
+    // Apply zoom and pan for crop preview
     ctx.scale(cropPreviewZoom, cropPreviewZoom);
+    ctx.translate(cropPreviewPan.x, cropPreviewPan.y);
 
     if (!activeScene) {
       ctx.restore();
@@ -174,7 +185,6 @@ function Preview({
     }
 
     const { crop } = activeScene;
-    // Draw the cropped portion as a reference.
     ctx.drawImage(
       video,
       crop.x,
@@ -187,29 +197,27 @@ function Preview({
       crop.height,
     );
 
-    // Outline the crop area (just as reference)
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, crop.width, crop.height);
 
-    // Draw final output rectangle with handles
     const finalRect = computeFinalOutputRect(activeScene);
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.fillRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
     ctx.strokeStyle = 'white';
     ctx.lineWidth = 2;
     ctx.strokeRect(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
-    drawFinalHandles(ctx, finalRect, 'white');
+    drawFinalHandles(ctx, finalRect, 'white', cropPreviewZoom);
 
     ctx.restore();
   };
 
-  const drawFinalHandles = (ctx, rect, color) => {
+  const drawFinalHandles = (ctx, rect, color, cropPreviewZoom) => {
     const { x, y, width: W, height: H } = rect;
-    const handleSize = 10;
+    const handleSize = getHandleSize();
+
     ctx.fillStyle = color;
 
-    // Corner handles for scaling
     const handles = [
       { name: 'top-left', x: x, y: y },
       { name: 'top-right', x: x + W, y: y },
@@ -297,7 +305,7 @@ function Preview({
 
   const hitTestCornerHandles = (mx, my, rect) => {
     const { x, y, width: W, height: H } = rect;
-    const handleSize = 10;
+    const handleSize = getHandleSize();
     const handles = [
       { name: 'top-left', x: x, y: y },
       { name: 'top-right', x: x + W, y: y },
@@ -317,16 +325,18 @@ function Preview({
     return null;
   };
 
-  const getMousePosInCanvas = (e, canvas, zoom) => {
+  const getMousePosInCanvas = (e, canvas, zoom, pan) => {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     let mx = (e.clientX - rect.left) * scaleX;
     let my = (e.clientY - rect.top) * scaleY;
 
-    // Adjust by inverse of UI zoom to map back to original coords
-    mx /= zoom;
-    my /= zoom;
+    // Inverse the zoom and pan transformations applied in the draw function
+    // draw: scale(zoom), translate(pan.x, pan.y)
+    // to find the original coordinates before transformations:
+    mx = mx / zoom - pan.x;
+    my = my / zoom - pan.y;
 
     return { mx, my };
   };
@@ -343,19 +353,68 @@ function Preview({
     setFinalCanvasZoom(prev => Math.max(0.1, Math.min(prev * zoomFactor, 10)));
   };
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const cropPreview = cropPreviewRef.current;
+    if (!canvas || !cropPreview) return;
+
+    canvas.addEventListener('wheel', handleWheelFinal, { passive: false });
+    cropPreview.addEventListener('wheel', handleWheelCrop, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheelFinal);
+      cropPreview.removeEventListener('wheel', handleWheelCrop);
+    };
+  }, []);
+
   const handleMouseDown = e => {
     e.preventDefault();
-
     const { scene, index } = getActiveScene();
-    if (!scene || index === -1) return;
+    if (!scene || index === -1) {
+      // Even if no scene, allow panning for convenience?
+      // We'll just support panning anyway.
+    }
 
-    const { mx, my } = getMousePosInCanvas(
-      e,
-      cropPreviewRef.current,
-      cropPreviewZoom,
-    );
+    // Determine which canvas the event is from
+    const isCropCanvas = e.currentTarget === cropPreviewRef.current;
+    const isFinalCanvas = e.currentTarget === canvasRef.current;
 
-    // Final rect interaction
+    // Handle middle mouse button for panning
+    if (e.button === 1) {
+      // Middle mouse button
+      setIsDragging(true);
+      if (isCropCanvas) {
+        setDragMode('pan-crop');
+        setDragStart({ x: e.clientX, y: e.clientY });
+        setInitialState({ pan: { ...cropPreviewPan } });
+      } else if (isFinalCanvas) {
+        setDragMode('pan-final');
+        setDragStart({ x: e.clientX, y: e.clientY });
+        setInitialState({ pan: { ...finalCanvasPan } });
+      }
+      return;
+    }
+
+    if (!scene || index === -1) return; // No scene, no final rect interactions
+
+    const { mx, my } = isCropCanvas
+      ? getMousePosInCanvas(
+          e,
+          cropPreviewRef.current,
+          cropPreviewZoom,
+          cropPreviewPan,
+        )
+      : getMousePosInCanvas(
+          e,
+          canvasRef.current,
+          finalCanvasZoom,
+          finalCanvasPan,
+        );
+
+    // If user is interacting with the final rect, it must be on the crop preview canvas.
+    // We designed final rect editing only on crop preview canvas.
+    if (!isCropCanvas) return;
+
     const finalRect = computeFinalOutputRect(scene);
 
     // Check corner handles for scale
@@ -424,13 +483,36 @@ function Preview({
     if (!isDragging) return;
     e.preventDefault();
 
+    if (dragMode === 'pan-crop' || dragMode === 'pan-final') {
+      // Panning the view
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+
+      if (dragMode === 'pan-crop') {
+        setCropPreviewPan({
+          x: initialState.pan.x + dx / cropPreviewZoom,
+          y: initialState.pan.y + dy / cropPreviewZoom,
+        });
+      } else {
+        setFinalCanvasPan({
+          x: initialState.pan.x + dx / finalCanvasZoom,
+          y: initialState.pan.y + dy / finalCanvasZoom,
+        });
+      }
+      return;
+    }
+
     const { scene, index } = getActiveScene();
     if (!scene || index === -1) return;
+
+    const isCropCanvas = e.currentTarget === cropPreviewRef.current;
+    if (!isCropCanvas) return; // final rect edit only on crop preview
 
     const { mx, my } = getMousePosInCanvas(
       e,
       cropPreviewRef.current,
       cropPreviewZoom,
+      cropPreviewPan,
     );
 
     const dx = mx - dragStart.x;
@@ -473,7 +555,6 @@ function Preview({
       const initW = initFinalRect.width;
       const initH = initFinalRect.height;
 
-      // Determine new half-size based on corner drag
       const cornerX = activeHandle.includes('left')
         ? initFinalRect.x
         : initFinalRect.x + initW;
@@ -542,13 +623,15 @@ function Preview({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseLeave}
-          onWheel={handleWheelCrop}
           style={{ cursor: 'default' }}
         />
         <VideoCanvas
           ref={canvasRef}
           videoWidth={videoDimensions.width}
-          onWheel={handleWheelFinal}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
           style={{ cursor: 'default' }}
         />
       </CanvasContainer>
