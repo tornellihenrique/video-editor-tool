@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { exec, execFile } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 
 const getVideoMetadata = videoPath => {
@@ -37,7 +38,14 @@ function mergeScenes(intermediateFiles, outputPath) {
     ffmpeg()
       .input(fileListPath)
       .inputOptions(['-f', 'concat', '-safe', '0'])
-      .outputOptions(['-c', 'copy']) // Avoid re-encoding
+      // .outputOptions(['-c', 'copy']) // Avoid re-encoding
+      .outputOptions([
+        '-r 30', // Consistent frame rate
+        '-c:v libx264', // Re-encode for uniformity
+        '-crf 18', // Match quality with scene encoding
+        '-preset slow', // Higher quality
+        '-pix_fmt yuv420p', // Ensure pixel format consistency
+      ])
       .output(outputPath)
       .on('start', commandLine => {
         console.log(`FFmpeg merge command: ${commandLine}`);
@@ -57,36 +65,29 @@ function mergeScenes(intermediateFiles, outputPath) {
   });
 }
 
-// function getFilters(crop, transform, targetWidth, targetHeight, scaleX, scaleY) {
-//   const { scale = 1.0, position } = transform || {};
-//   const { x = 0, y = 0 } = position || {};
+function mergeScenesWithFilter(intermediateFiles, outputPath) {
+  return new Promise((resolve, reject) => {
+    const inputs = intermediateFiles.map(file => `-i ${file}`).join(' ');
 
-//   // Calculate scaled dimensions based on user-defined scale
-//   let scaledWidth = Math.floor(crop.width * scale);
-//   let scaledHeight = Math.floor(crop.height * scale);
+    // Generate the concat filter string
+    const concatFilter =
+      intermediateFiles
+        .map((_, index) => `[${index}:v:0][${index}:a:0]`)
+        .join('') + `concat=n=${intermediateFiles.length}:v=1:a=1[outv][outa]`;
 
-//   // Ensure scaled dimensions fit within the target frame
-//   const maxScaleX = targetWidth / scaledWidth;
-//   const maxScaleY = targetHeight / scaledHeight;
-//   const effectiveScale = Math.min(1.0, maxScaleX, maxScaleY);
+    // Use the concat filter
+    const ffmpegCmd = `ffmpeg ${inputs} -filter_complex "${concatFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -crf 23 -preset fast ${outputPath}`;
 
-//   // Adjust scaled dimensions based on effective scale
-//   scaledWidth = Math.floor(scaledWidth * effectiveScale);
-//   scaledHeight = Math.floor(scaledHeight * effectiveScale);
-
-//   // Adjust position to ensure it doesn't overflow the target frame
-//   const adjustedX = Math.min(Math.max(Math.floor(x * scaleX), 0), targetWidth - scaledWidth);
-//   const adjustedY = Math.min(Math.max(Math.floor(y * scaleY), 0), targetHeight - scaledHeight);
-
-//   return [
-//     // Crop the user-defined area
-//     `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`,
-//     // Apply user-defined scaling and fit within the target resolution
-//     `scale=${scaledWidth}:${scaledHeight}`,
-//     // Pad the scaled content into the target frame at the specified position
-//     `pad=${targetWidth}:${targetHeight}:${adjustedX}:${adjustedY}`
-//   ];
-// }
+    exec(ffmpegCmd, (error, stdout, stderr) => {
+      if (error) {
+        console.error('Error during video merge:', stderr);
+        return reject(error);
+      }
+      console.log('Video merge complete:', stdout);
+      resolve(outputPath);
+    });
+  });
+}
 
 function getFilters(
   crop,
@@ -121,9 +122,20 @@ function getFilters(
   ];
 }
 
-function getComplexFilter(crop, transform, targetWidth, targetHeight, virtualWidth, virtualHeight) {
-  const adjustedX = Math.floor((transform.position.x / virtualWidth) * targetWidth);
-  const adjustedY = Math.floor((transform.position.y / virtualHeight) * targetHeight);
+function getComplexFilter(
+  crop,
+  transform,
+  targetWidth,
+  targetHeight,
+  virtualWidth,
+  virtualHeight,
+) {
+  const adjustedX = Math.floor(
+    (transform.position.x / virtualWidth) * targetWidth,
+  );
+  const adjustedY = Math.floor(
+    (transform.position.y / virtualHeight) * targetHeight,
+  );
 
   const scaledWidth = Math.floor(crop.width * transform.scale);
   const scaledHeight = Math.floor(crop.height * transform.scale);
@@ -136,8 +148,14 @@ function getComplexFilter(crop, transform, targetWidth, targetHeight, virtualWid
     `color=black:size=${targetWidth}x${targetHeight}[bg]`,
 
     // 3. Overlay the scaled video onto the background
-    `[bg][scaled]overlay=${adjustedX}:${adjustedY}:shortest=1[out]`
+    `[bg][scaled]overlay=${adjustedX}:${adjustedY}:shortest=1[out]`,
   ];
 }
 
-module.exports = { getVideoMetadata, mergeScenes, getFilters, getComplexFilter };
+module.exports = {
+  getVideoMetadata,
+  mergeScenes,
+  mergeScenesWithFilter,
+  getFilters,
+  getComplexFilter,
+};

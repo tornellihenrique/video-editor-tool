@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { saveAs } from 'file-saver';
 import styled from 'styled-components';
 
 import { useEditorStore } from '../store/editorStore';
@@ -109,6 +110,8 @@ function VideoEditor() {
     setError(null);
     try {
       if (videoRef.current) {
+        setVideoUrl(video.fileUrl);
+
         videoRef.current.src = video.fileUrl;
         videoRef.current.load();
         videoRef.current.onloadedmetadata = () => {
@@ -228,6 +231,46 @@ function VideoEditor() {
     }
   };
 
+  const handleExport = async () => {
+    try {
+      setLoading(true); // Show loading overlay
+      const res = await fetch(`${API_BASE_URL}/export`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoPath: videoUrl,
+          scenes,
+          targetAspectRatio: aspectRatio,
+          targetResolution: resolution,
+          virtualResolution,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Export failed');
+      }
+
+      const { downloadUrl } = await res.json();
+
+      // Fetch the exported video and download it
+      const downloadRes = await fetch(downloadUrl);
+      if (!downloadRes.ok) {
+        throw new Error('Failed to download exported video');
+      }
+
+      const blob = await downloadRes.blob();
+      saveAs(blob, 'exported_video.mp4');
+    } catch (err) {
+      console.error('Error during export:', err.message);
+      setError(err.message); // Display the error
+    } finally {
+      setLoading(false); // Hide loading overlay
+    }
+  };
+
   const handleSelectVideo = video => {
     processVideo(video);
   };
@@ -303,6 +346,13 @@ function VideoEditor() {
             {isFinalResultMode
               ? 'Switch to Raw Video'
               : 'Switch to Final Result'}
+          </button>
+          <button
+            style={{ margin: '0 20px' }}
+            onClick={handleExport}
+            disabled={loading || !videoUrl}
+          >
+            Export
           </button>
         </Header>
         <Preview

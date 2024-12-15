@@ -18,7 +18,12 @@ const isWindows = os.platform() === 'win32';
 const isLinux = os.platform() === 'linux';
 const isMac = os.platform() === 'darwin';
 
-const { mergeScenes, getFilters, getComplexFilter } = require('./utils.js');
+const {
+  mergeScenes,
+  mergeScenesWithFilter,
+  getFilters,
+  getComplexFilter,
+} = require('./utils.js');
 
 const app = express();
 const PORT = 3000;
@@ -348,10 +353,10 @@ app.post('/export', async (req, res) => {
 
     const processScene = (scene, index) => {
       return new Promise((resolve, reject) => {
-        const { start, end, crop, transform } = scene;
-        const complexFilter = getComplexFilter(
+        const { start, end, crop, scale, position } = scene;
+        const filters = getComplexFilter(
           crop,
-          transform,
+          { scale, position },
           targetWidth,
           targetHeight,
           virtualWidth,
@@ -360,12 +365,16 @@ app.post('/export', async (req, res) => {
         const outputPath = path.join(outputDir, `scene_${index + 1}.mp4`);
 
         ffmpeg(localFilePath)
-          // Apply complex filter
-          .complexFilter(complexFilter)
-          // Map the final output stream to the output file
+          .complexFilter(filters)
           .map('[out]')
           .setStartTime(start)
           .setDuration(end - start)
+          .outputOptions([
+            '-c:v libx264',
+            '-crf 18', // Higher quality
+            '-preset slow', // More quality-focused
+            '-pix_fmt yuv420p', // Ensure consistent pixel format
+          ])
           .output(outputPath)
           .on('start', commandLine => {
             console.log(
