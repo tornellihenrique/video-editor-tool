@@ -1,28 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { exec, execFile } = require('child_process');
-const ffmpeg = require('fluent-ffmpeg');
-
-const getVideoMetadata = videoPath => {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(videoPath, (err, metadata) => {
-      if (err) {
-        return reject(err);
-      }
-      const videoStream = metadata.streams.find(
-        stream => stream.codec_type === 'video',
-      );
-      if (!videoStream) {
-        return reject(new Error('No video stream found'));
-      }
-      resolve({
-        width: videoStream.width,
-        height: videoStream.height,
-        duration: videoStream.duration,
-      });
-    });
-  });
-};
+const { exec, execFile, spawn } = require('child_process');
 
 function mergeScenes(intermediateFiles, outputPath) {
   return new Promise((resolve, reject) => {
@@ -34,92 +12,41 @@ function mergeScenes(intermediateFiles, outputPath) {
       .join('\n');
     fs.writeFileSync(fileListPath, fileListContent);
 
-    // Use FFmpeg concat to merge scenes
-    ffmpeg()
-      .input(fileListPath)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
-      // .outputOptions(['-c', 'copy']) // Avoid re-encoding
-      .outputOptions([
-        '-r 30', // Consistent frame rate
-        '-c:v libx264', // Re-encode for uniformity
-        '-crf 18', // Match quality with scene encoding
-        '-preset slow', // Higher quality
-        '-pix_fmt yuv420p', // Ensure pixel format consistency
-      ])
-      .output(outputPath)
-      .on('start', commandLine => {
-        console.log(`FFmpeg merge command: ${commandLine}`);
-      })
-      .on('end', () => {
+    // FFmpeg arguments for merging videos with high quality and audio retention
+    const ffmpegArgs = [
+      '-y', // Overwrite output files without asking
+      '-f', 'concat', // Specify the concat demuxer
+      '-safe', '0', // Allow unsafe file paths
+      '-i', fileListPath, // Input file list
+      '-c:v', 'libx264', // Encode video with H.264 codec
+      '-crf', '18', // Set constant rate factor for high quality
+      '-preset', 'slow', // Use slow preset for better compression
+      '-pix_fmt', 'yuv420p', // Set pixel format for compatibility
+      '-c:a', 'aac', // Encode audio with AAC codec
+      '-b:a', '192k', // Set audio bitrate
+      outputPath, // Output file path
+    ];
+
+    const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+    ffmpegProcess.stdout.on('data', data => {
+      console.log(`FFmpeg stdout: ${data}`);
+    });
+
+    ffmpegProcess.stderr.on('data', data => {
+      console.error(`FFmpeg stderr: ${data}`);
+    });
+
+    ffmpegProcess.on('close', code => {
+      fs.unlinkSync(fileListPath); // Clean up temporary file list
+      if (code === 0) {
         console.log('Final video merge complete:', outputPath);
-        fs.unlinkSync(fileListPath); // Clean up temporary file list
         resolve(outputPath);
-      })
-      .on('error', (err, stdout, stderr) => {
-        console.error('Error during video merge:', err.message);
-        console.error('FFmpeg stdout:', stdout);
-        console.error('FFmpeg stderr:', stderr);
-        reject(err);
-      })
-      .run();
-  });
-}
-
-function mergeScenesWithFilter(intermediateFiles, outputPath) {
-  return new Promise((resolve, reject) => {
-    const inputs = intermediateFiles.map(file => `-i ${file}`).join(' ');
-
-    // Generate the concat filter string
-    const concatFilter =
-      intermediateFiles
-        .map((_, index) => `[${index}:v:0][${index}:a:0]`)
-        .join('') + `concat=n=${intermediateFiles.length}:v=1:a=1[outv][outa]`;
-
-    // Use the concat filter
-    const ffmpegCmd = `ffmpeg ${inputs} -filter_complex "${concatFilter}" -map "[outv]" -map "[outa]" -c:v libx264 -crf 23 -preset fast ${outputPath}`;
-
-    exec(ffmpegCmd, (error, stdout, stderr) => {
-      if (error) {
-        console.error('Error during video merge:', stderr);
-        return reject(error);
+      } else {
+        reject(new Error(`FFmpeg process exited with code ${code}`));
       }
-      console.log('Video merge complete:', stdout);
-      resolve(outputPath);
     });
   });
-}
-
-function getFilters(
-  crop,
-  transform,
-  targetWidth,
-  targetHeight,
-  virtualWidth,
-  virtualHeight,
-) {
-  // Compute position in final output space
-  const adjustedX = Math.floor(
-    (transform.position.x / virtualWidth) * targetWidth,
-  );
-  const adjustedY = Math.floor(
-    (transform.position.y / virtualHeight) * targetHeight,
-  );
-
-  // Compute the scaled size of the cropped area
-  const scaledWidth = Math.floor(crop.width * transform.scale);
-  const scaledHeight = Math.floor(crop.height * transform.scale);
-
-  return [
-    // 1. Crop the specified region from the original video
-    `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`,
-
-    // 2. Scale the cropped region by the transform.scale factor
-    `scale=${scaledWidth}:${scaledHeight}`,
-
-    // 3. Pad (position) the scaled region into the final target resolution
-    //    at the computed adjustedX and adjustedY offsets
-    `pad=${targetWidth}:${targetHeight}:${adjustedX}:${adjustedY}:black`,
-  ];
 }
 
 function getComplexFilter(
@@ -153,9 +80,6 @@ function getComplexFilter(
 }
 
 module.exports = {
-  getVideoMetadata,
   mergeScenes,
-  mergeScenesWithFilter,
-  getFilters,
   getComplexFilter,
 };

@@ -8,8 +8,7 @@ const cors = require('cors');
 const db = require('./db');
 const { v4: uuidv4 } = require('uuid');
 
-const { exec, execFile } = require('child_process');
-const ffmpeg = require('fluent-ffmpeg');
+const { exec, execFile, spawn } = require('child_process');
 
 const os = require('os');
 
@@ -18,12 +17,7 @@ const isWindows = os.platform() === 'win32';
 const isLinux = os.platform() === 'linux';
 const isMac = os.platform() === 'darwin';
 
-const {
-  mergeScenes,
-  mergeScenesWithFilter,
-  getFilters,
-  getComplexFilter,
-} = require('./utils.js');
+const { mergeScenes, getComplexFilter } = require('./utils.js');
 
 const app = express();
 const PORT = 3000;
@@ -346,11 +340,12 @@ app.post('/export', async (req, res) => {
       .map(Number);
 
     const uniqueId = `${Date.now()}-${uuidv4()}`;
-    const outputDir = path.join(processedPath, uniqueId);
+    const outputDir = path.join(__dirname, 'processed', uniqueId);
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
+    // Function to process each scene
     const processScene = (scene, index) => {
       return new Promise((resolve, reject) => {
         const { start, end, crop, scale, position } = scene;
@@ -361,71 +356,62 @@ app.post('/export', async (req, res) => {
           targetHeight,
           virtualWidth,
           virtualHeight,
-        );
+        ).join(',');
+
         const outputPath = path.join(outputDir, `scene_${index + 1}.mp4`);
 
-        ffmpeg(localFilePath)
-          .complexFilter(filters)
-          .map('[out]')
-          .setStartTime(start)
-          .setDuration(end - start)
-          .outputOptions([
-            '-c:v libx264',
-            '-crf 18', // Higher quality
-            '-preset slow', // More quality-focused
-            '-pix_fmt yuv420p', // Ensure consistent pixel format
-          ])
-          .output(outputPath)
-          .on('start', commandLine => {
-            console.log(
-              `FFmpeg command for scene ${index + 1}: ${commandLine}`,
-            );
-          })
-          .on('end', () => {
+        const ffmpegArgs = [
+          '-y',
+          '-i', localFilePath,
+          '-filter_complex', filters,
+          '-map', '[out]',
+          '-map', '0:a?', // Include audio stream if present
+          '-ss', start.toString(),
+          '-t', (end - start).toString(),
+          '-c:v', 'libx264',
+          '-crf', '18',
+          '-preset', 'slow',
+          '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac',
+          '-b:a', '192k',
+          outputPath,
+        ];
+
+        const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+        ffmpegProcess.stdout.on('data', data => {
+          console.log(`FFmpeg stdout: ${data}`);
+        });
+
+        ffmpegProcess.stderr.on('data', data => {
+          console.error(`FFmpeg stderr: ${data}`);
+        });
+
+        ffmpegProcess.on('close', code => {
+          if (code === 0) {
             console.log(`Scene ${index + 1} processed: ${outputPath}`);
             resolve(outputPath);
-          })
-          .on('error', (err, stdout, stderr) => {
-            console.error(`Error processing scene ${index + 1}:`, err.message);
-            console.error('FFmpeg stdout:', stdout);
-            console.error('FFmpeg stderr:', stderr);
-            reject(
-              new Error(`Failed to process scene ${index + 1}: ${err.message}`),
-            );
-          })
-          .run();
+          } else {
+            reject(new Error(`FFmpeg process exited with code ${code}`));
+          }
+        });
       });
     };
 
     // Process scenes and merge them
-    Promise.all(scenes.map((scene, index) => processScene(scene, index)))
-      .then(processedFiles => {
-        const finalOutputPath = path.join(outputDir, `final_${uniqueId}.mp4`);
-        mergeScenes(processedFiles, finalOutputPath)
-          .then(() => {
-            res.status(200).json({
-              message: 'Video export complete',
-              downloadUrl: `${req.protocol}://${req.get(
-                'host',
-              )}/download/${uniqueId}`,
-            });
-          })
-          .catch(mergeError => {
-            console.error('Error merging videos:', mergeError.message);
-            res.status(500).json({
-              error: 'Failed to merge videos',
-              details: mergeError.message,
-            });
-          });
-      })
-      .catch(err => {
-        console.error('Error processing scenes:', err.message);
-        res
-          .status(500)
-          .json({ error: 'Failed to process scenes', details: err.message });
-      });
+    const processedFiles = await Promise.all(
+      scenes.map((scene, index) => processScene(scene, index)),
+    );
+
+    const finalOutputPath = path.join(outputDir, `final_${uniqueId}.mp4`);
+    await mergeScenes(processedFiles, finalOutputPath);
+
+    res.status(200).json({
+      message: 'Video export complete',
+      downloadUrl: `${req.protocol}://${req.get('host')}/download/${uniqueId}`,
+    });
   } catch (err) {
-    console.error('Error validating video or processing scenes:', err.message);
+    console.error('Error processing video:', err.message);
     res
       .status(500)
       .json({ error: 'Failed to process video', details: err.message });
